@@ -3,9 +3,9 @@
 	"name": "Serial Events Plugin for FPP",
 	"author": "Scott Hanson (computergeek1507)",
 	"description": "This Plugin Listens for Serial Data and runs Commands based on it.",
-	"homeURL": "https://github.com/computergeek1507/fpp-plugin-serial_events",
-	"srcURL": "https://github.com/computergeek1507/fpp-plugin-serial_events.git",
-	"bugURL": "https://github.com/computergeek1507/fpp-plugin-serial_events/issues",
+	"homeURL": "https://github.com/computergeek1507/fpp-plugin-serial-events",
+	"srcURL": "https://github.com/computergeek1507/fpp-plugin-serial-events.git",
+	"bugURL": "https://github.com/computergeek1507/fpp-plugin-serial-events/issues",
 	"allowUpdates": 1,
 	"versions": [
 		{
