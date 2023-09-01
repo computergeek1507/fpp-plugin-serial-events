@@ -1,4 +1,3 @@
-
 <?
 function returnIfExists($json, $setting) {
     if ($json == null) {
@@ -19,7 +18,7 @@ function convertAndGetSettings() {
         $json = json_decode($j, true);
         return $json;
     }
-    $j = "[]";
+    $j = "{\"port\":\"\",\"speed\":115200,\"serialEvents\":[]}";
     return json_decode($j, true);
 }
 
@@ -32,27 +31,6 @@ $pluginJson = convertAndGetSettings();
 <legend>FPP Serial Event Config</legend>
 
 <script>
-
-var SerialDevices = new Array();
-<?
-foreach (scandir("/dev/") as $fileName) {
-    if ((preg_match("/^ttySC?[0-9]+/", $fileName)) ||
-        (preg_match("/^ttyACM[0-9]+/", $fileName)) ||
-        (preg_match("/^ttyO[0-9]/", $fileName)) ||
-        (preg_match("/^ttyAMA[0-9]+/", $fileName)) ||
-        (preg_match("/^ttyUSB[0-9]+/", $fileName))) {
-        echo "SerialDevices['$fileName'] = '$fileName';\n";
-    }
-}
-if (is_dir("/dev/serial/by-id")) {
-    foreach (scandir("/dev/serial/by-id") as $fileName) {
-        if (strcmp($fileName, ".") != 0 && strcmp($fileName, "..") != 0) {
-            $linkDestination = basename(readlink('/dev/serial/by-id/' . $fileName));
-            echo "SerialDevices['serial/by-id/$fileName'] = '$fileName -> $linkDestination';\n";
-        }
-    }
-}
-?>
 
 var serialEventConfig = <? echo json_encode($pluginJson, JSON_PRETTY_PRINT); ?>;
 
@@ -67,9 +45,9 @@ function AddSerialEventItem(type) {
     }
     html += "'><td class='colNumber rowNumber'>" + id + ".</td><td><span style='display: none;' class='uniqueId'>" + uniqueId + "</span></td>";
 
-    html += DeviceSelect(SerialDevices, "");
+    //html += DeviceSelect(SerialDevices, "");
     
-    html += "<td><input type='text' minlength='7' maxlength='15' size='15' class='descrip' /></td>";
+    html += "<td><input type='text' minlength='7' maxlength='15' size='15' class='desc' /></td>";
     html += "<td><select class='conditiontype'>";
     html += "<option value='contains'";
     if(type == 'contains') {html += " selected ";}
@@ -98,29 +76,30 @@ function AddSerialEventItem(type) {
 }
 
 function SaveSerialEventItem(row) {
-    var ip = $(row).find('.ipaddress').val();
-    var startchan = parseInt($(row).find('.startchan').val(),10);
-
-    var plugnum = parseInt($(row).find('.plugnum').val(),10);
+    var id = $(row).find('.uniqueId').html();
+    var desc = $(row).find('.desc').val();
 	var conditiontype = $(row).find('.conditiontype').val();
+    var conditionvalue = $(row).find('.conditionvalue').val();
 
     var json = {
-        "ip": ip,
-        "startchannel": startchan,
+        "description": desc,
         "condition": conditiontype,
-        "plugnumber": plugnum
+        "conditionValue": conditionvalue
     };
+
+    CommandToJSON('serialcommand' + id, 'tableSerialCommand_' + id, json, true);
     return json;
 }
 
 function SaveSerialEventItems() {
-    var serialeventConfig = [];
+
+    newserialeventConfig = { "port": '', "speed": 115200, "serialEvents": []};
     var i = 0;
     $("#serialeventTableBody > tr").each(function() {
-        serialeventConfig[i++] = SaveSerialEventItem(this);
+        newserialeventConfig["serialEvents"][i++] = SaveSerialEventItem(this);
     });
     
-    var data = JSON.stringify(serialeventConfig);
+    var data = JSON.stringify(newserialeventConfig);
     $.ajax({
         type: "POST",
 	url: 'api/configfile/plugin.serial-event.json',
@@ -133,6 +112,13 @@ function SaveSerialEventItems() {
            SetRestartFlag(2);
         }
     });
+}
+
+function RefreshLastMessages() {
+    $.get('api/plugin-apis/SERIALEVENT/list', function (data) {
+          $("#lastMessages").text(data);
+        }
+    );
 }
 
 
@@ -174,11 +160,16 @@ $(document).ready(function() {
 });
 
 </script>
+
+<div>
+Serial Port:<input type='text' minlength='7' maxlength='30' size='15' class='serialport' />
+Speed:<input type='number' class='serialspeed' />
+<select class='serialspeedsel'></select>
 <div>
 <table border=0>
 <tr><td colspan='2'>
         <input type="button" value="Save" class="buttons genericButton" onclick="SaveSerialEventItems();">
-        <input type="button" value="Add" class="buttons genericButton" onclick="AddSerialEventItem('light');">
+        <input type="button" value="Add" class="buttons genericButton" onclick="AddSerialEventItem('contains');">
         <input id="delButton" type="button" value="Delete" class="deleteEventButton disableButtons genericButton" onclick="RemoveSerialEventItem();">
     </td>
 </tr>
@@ -215,12 +206,21 @@ $(document).ready(function() {
 </div>
 <script>
 
-$.each(serialeventConfig, function( key, val ) {
-    var row = AddSerialEventItem(val["conditiontype"]);
-    $(row).find('.ipaddress').val(val["ip"]);
-    $(row).find('.startchan').val(val["startchannel"]);
-    $(row).find('.plugnum').val(val["plugnumber"]);
+$.each(serialeventConfig["serialEvents"], function( key, val ) {
+    var row = AddSerialEventItem(val["condition"]);
+    $(row).find('.desc').val(val["description"]);
+    $(row).find('.conditionvalue').val(val["conditionValue"]);
+
+    var id = parseInt($(row).find('.uniqueId').html());
+    PopulateExistingCommand(val, 'serialcommand' + id, 'tableSerialCommand_' + id, false, PrintArgsInputsForEditable);
 });
+
+for (let i = 0; i < SerialDevices.length; i++) {
+    let opt = document.createElement("option");
+    opt.value = SerialDevices[i].id; //or i, depending on what you need to do
+    opt.innerHTML = SerialDevices[i].name; 
+    $('#serialspeedsel').append(opt); //Chuck it into the dom here if you want
+}
 </script>
 
 </fieldset>

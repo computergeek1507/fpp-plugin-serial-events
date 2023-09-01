@@ -6,6 +6,7 @@
 #include <sys/types.h>
 #include <sys/socket.h>
 #include <arpa/inet.h>
+#include <sys/ioctl.h>
 #include <cstring>
 #include <fstream>
 #include <list>
@@ -15,6 +16,12 @@
 #include <cmath>
 #include <mutex>
 #include <regex>
+#include <thread>
+#include <chrono>
+#include <future>
+#include <atomic>
+
+#include <termios.h>
 
 #include "commands/Commands.h"
 #include "common.h"
@@ -22,11 +29,13 @@
 #include "Plugin.h"
 #include "log.h"
 
+#include "channeloutput/serialutil.h"
+
 struct SerialCondition {
     SerialCondition() {}
     explicit SerialCondition(Json::Value &v) {
         conditionType = v["condition"].asString();
-        val = v["conditionText"].asString();        
+        val = v["conditionValue"].asString();        
     }
     
     bool matches(std::string const& ev) {
@@ -37,8 +46,13 @@ struct SerialCondition {
         } else if (conditionType == "endswith") {
             return ev.ends_with(val);
         } else if (conditionType == "regex") {
-            std::regex self_regex(val, std::regex_constants::ECMAScript | std::regex_constants::icase);
-            return std::regex_search(ev, self_regex);
+            try{
+                std::regex self_regex(val, std::regex_constants::ECMAScript | std::regex_constants::icase);
+                return std::regex_search(ev, self_regex);
+            } catch(std::exception &ex) {
+                LogErr(VB_PLUGIN, "Regex Error '%s'\n", ex.what());
+                return false;
+            }
         } 
         return false;
     }    
@@ -56,15 +70,14 @@ struct SerialCommandArg {
 
 struct SerialEvent {
     explicit SerialEvent(Json::Value &v) {
-        path = v["path"].asString();
-        description = v["description"].asString();        
-        condition = SerialCondition(v["condition"]);        
+        description = v["description"].asString();
+        condition = SerialCondition(v);
 
         command = v;
-        command.removeMember("path");
         command.removeMember("argTypes");
         command.removeMember("args");
-        command.removeMember("conditions");
+        command.removeMember("condition");
+        command.removeMember("conditionValue");
         command.removeMember("description");
 
         if (v.isMember("args")) {
@@ -109,9 +122,8 @@ struct SerialEvent {
         CommandManager::INSTANCE.run(newCommand);
     }
     
-    std::string path;
-    std::string description;
-    
+
+    std::string description;    
     SerialCondition condition;
     
     Json::Value command;
@@ -121,38 +133,142 @@ struct SerialEvent {
 class SerialEventPlugin : public FPPPlugin, public httpserver::http_resource {
 public:
     std::vector<std::unique_ptr<SerialEvent>> serial_events;
-    std::vector<std::string> serial_data;
+    std::list<std::string> serial_data;
     
     std::mutex queueLock;
+    std::atomic_int m_fd{0};
+
+    std::promise<void> exitSignal;
+    std::unique_ptr<std::thread> th;
   
     SerialEventPlugin() : FPPPlugin("fpp-plugin-serial_event") {
-        LogInfo(VB_PLUGIN, "Initializing Serial Event Plugin\n");
-
-        
+        LogInfo(VB_PLUGIN, "Initializing Serial Event Plugin\n");        
+        InitSerial();
+    }
+    virtual ~SerialEventPlugin() {   
+        CloseSerial();     
+    }
+    void InitSerial() {
         if (FileExists(FPP_DIR_CONFIG("/plugin.serial-event.json"))) {
-            Json::Value root;
-            bool success =  LoadJsonFromFile(FPP_DIR_CONFIG("/plugin.serial-event.json"), root);
-            if (root.isMember("events")) {
-                for (int x = 0; x < root["events"].size(); x++) {
-                    serial_events.emplace_back(std::make_unique<SerialEvent>(root["events"][x]));
+            std::string port;
+            int speed = 115200;
+            try {
+                Json::Value root;
+                bool success =  LoadJsonFromFile(FPP_DIR_CONFIG("/plugin.serial-event.json"), root);
+                if (root.isMember("serialEvents")) {
+                    for (int x = 0; x < root["serialEvents"].size(); x++) {
+                        serial_events.emplace_back(std::make_unique<SerialEvent>(root["serialEvents"][x]));
+                    }
                 }
+
+                if (root.isMember("port")) {
+                    port = root["port"].asString();
+                }
+                if (root.isMember("speed")) {
+                    speed = root["speed"].asInt();
+                }  
+                LogInfo(VB_PLUGIN, "Using %s Serial Output Speed %d\n", port.c_str(), speed);
+                if(port.empty()) {
+                    LogErr(VB_PLUGIN, "Serial Port is empty '%s'\n", port.c_str());
+                    return;
+                }
+                if(port.find("/dev/") == std::string::npos)
+                {
+                    port = "/dev/" + port;
+                }
+                int fd = SerialOpen(port.c_str(), speed, "8N1", false);
+                if (fd < 0) {
+                    LogErr(VB_PLUGIN, "Could Not Open Serial Port '%s'\n", port.c_str());
+                    return;
+                }
+                m_fd = fd;
+                std::this_thread::sleep_for(std::chrono::milliseconds(10));
+                tcflush(m_fd,TCIOFLUSH);
+                ioctl(m_fd, TCIOFLUSH, 2); 
+                std::future<void> futureObj = exitSignal.get_future();
+                // Starting Thread & move the future object in lambda function by reference
+                th.reset(new std::thread(&SerialEventPlugin::threadFunction, this, std::move(futureObj)));
+                LogInfo(VB_PLUGIN, "Serial Input Started\n");
+
+            } catch (...) {
+                LogErr(VB_PLUGIN, "Could not Initialize Serial Port '%s'\n", port.c_str());
+            }                
+        }else{
+            LogInfo(VB_PLUGIN, "No plugin.serial-event.json config file found\n");
+        }
+    }
+
+    void CloseSerial() {
+        if(th) {
+            exitSignal.set_value();
+            //Wait for thread to join
+            th->join();
+            th.reset(nullptr);            
+        }
+        if (m_fd != 0) {
+            SerialClose(m_fd);
+        }
+    }
+
+    int SerialDataAvailable(int fd) {
+        int bytes {0};
+        ioctl(fd, FIONREAD, &bytes);
+        return bytes;
+    }
+
+    int SerialDataRead(int fd, char* buf, size_t len) {
+        // Read() (using read() ) will return an 'error' EAGAIN as it is
+        // set to non-blocking. This is not a true error within the
+        // functionality of Read, and thus should be handled by the caller.
+        int n = read(fd, buf, len);
+        if((n < 0) && (errno == EAGAIN)) return 0;
+        return n;
+    }
+
+    void remove_control_characters(std::string& s) {
+        s.erase(std::remove_if(s.begin(), s.end(), [](char c) { return std::iscntrl(c); }), s.end());
+    }
+
+    void threadFunction(std::future<void> futureObj) {
+        LogInfo(VB_PLUGIN, "Serial Thread Start\n");
+        std::cout << "Thread Start" << std::endl;
+        while (futureObj.wait_for(std::chrono::milliseconds(100)) == std::future_status::timeout)
+        {
+            if (m_fd <= 0) {
+                LogInfo(VB_PLUGIN, "Serial Is Zero\n");
             }
-            if (root.isMember("ports")) {
-                for (int x = 0; x < root["ports"].size(); x++) {
-                    if (root["ports"][x]["enabled"].asBool()) {
-                        std::string name = root["ports"][x]["name"].asString();
-                        try {
-                           
-                        } catch (...) {
-                            LogErr(VB_PLUGIN, "Could not initialize Serial Event plugin for port %s\n", name.c_str());
+            //LogInfo(VB_PLUGIN, "Serial Doing Some Work\n");
+            //std::cout << "Doing Some Work" << std::endl;
+            if(SerialDataAvailable(m_fd))
+            {
+                char buf[256];
+                int n = read(m_fd,&buf, sizeof(buf));
+                std::this_thread::sleep_for(std::chrono::milliseconds(10));
+                tcflush(m_fd, TCIOFLUSH);
+                ioctl(m_fd, TCIOFLUSH, 2); 
+                std::string serialData = buf;
+
+                remove_control_characters(serialData);
+                if(!serialData.empty()) {
+                    LogInfo(VB_PLUGIN, "Serial data found '%s'\n", serialData.c_str());
+                    serial_data.push_back(serialData);
+                    if (serial_data.size() > 25) {
+                        serial_data.pop_front();
+                    }
+                    for (auto &a : serial_events) {
+                        if (a->matches(serialData)) {
+                            a->invoke(serialData);
                         }
                     }
                 }
+                
             }
+            std::this_thread::sleep_for(std::chrono::milliseconds(1000));
         }
+        LogInfo(VB_PLUGIN, "Serial Thread End\n");
+        std::cout << "Thread End" << std::endl;
     }
-    virtual ~SerialEventPlugin() {        
-    }
+
     virtual const std::shared_ptr<httpserver::http_response> render_GET(const httpserver::http_request &req) override {
         std::string v;
         
