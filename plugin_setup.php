@@ -99,6 +99,9 @@ function SaveSerialEventItems() {
         newserialeventConfig["serialEvents"][i++] = SaveSerialEventItem(this);
     });
     
+    newserialeventConfig["port"] = document.getElementById("serialport").value;
+    newserialeventConfig["speed"] = document.getElementById("serialport").serialspeed;
+
     var data = JSON.stringify(newserialeventConfig);
     $.ajax({
         type: "POST",
@@ -162,9 +165,8 @@ $(document).ready(function() {
 </script>
 
 <div>
-Serial Port:<input type='text' minlength='7' maxlength='30' size='15' class='serialport' />
-Speed:<input type='number' class='serialspeed' />
-<select class='serialspeedsel'></select>
+Serial Port:<input type='text' id='serialport' minlength='7' maxlength='30' size='15' class='serialport' />
+Speed:<input type='number' id='serialspeed' class='serialspeed' />
 <div>
 <table border=0>
 <tr><td colspan='2'>
@@ -206,7 +208,7 @@ Speed:<input type='number' class='serialspeed' />
 </div>
 <script>
 
-$.each(serialeventConfig["serialEvents"], function( key, val ) {
+$.each(serialEventConfig["serialEvents"], function( key, val ) {
     var row = AddSerialEventItem(val["condition"]);
     $(row).find('.desc').val(val["description"]);
     $(row).find('.conditionvalue').val(val["conditionValue"]);
@@ -215,12 +217,10 @@ $.each(serialeventConfig["serialEvents"], function( key, val ) {
     PopulateExistingCommand(val, 'serialcommand' + id, 'tableSerialCommand_' + id, false, PrintArgsInputsForEditable);
 });
 
-for (let i = 0; i < SerialDevices.length; i++) {
-    let opt = document.createElement("option");
-    opt.value = SerialDevices[i].id; //or i, depending on what you need to do
-    opt.innerHTML = SerialDevices[i].name; 
-    $('#serialspeedsel').append(opt); //Chuck it into the dom here if you want
-}
+document.getElementById("serialport").value = serialEventConfig["port"];
+document.getElementById("serialspeed").value = serialEventConfig["speed"];
+
+
 </script>
 
 </fieldset>
