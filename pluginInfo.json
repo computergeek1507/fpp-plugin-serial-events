@@ -1,5 +1,5 @@
 {
-	"repoName": "fpp-plugin-serial_events",
+	"repoName": "fpp-plugin-serial-events",
 	"name": "Serial Events Plugin for FPP",
 	"author": "Scott Hanson (computergeek1507)",
 	"description": "This Plugin Listens for Serial Data and runs Commands based on it.",
