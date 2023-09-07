@@ -34,18 +34,25 @@
 struct SerialCondition {
     SerialCondition() {}
     explicit SerialCondition(Json::Value &v) {
-        conditionType = v["condition"].asString();
-        val = v["conditionValue"].asString();        
+        if (v.isMember("condition")) {
+            conditionType = v["condition"].asString();
+        }
+        if (v.isMember("conditionValue")) {
+            val = v["conditionValue"].asString();
+        }    
     }
     
     bool matches(std::string const& ev) {
         if (conditionType == "contains") {
             return ev.find(val) != std::string::npos;
-        } else if (conditionType == "startswith") {
+        }
+        if (conditionType == "startswith") {
             return ev.starts_with(val);
-        } else if (conditionType == "endswith") {
+        }
+        if (conditionType == "endswith") {
             return ev.ends_with(val);
-        } else if (conditionType == "regex") {
+        }
+        if (conditionType == "regex") {
             try{
                 std::regex self_regex(val, std::regex_constants::ECMAScript | std::regex_constants::icase);
                 return std::regex_search(ev, self_regex);
@@ -56,8 +63,69 @@ struct SerialCondition {
         } 
         return false;
     }    
-    std::string conditionType;
+    std::string conditionType = "contains";
     std::string val;
+};
+
+struct SerialModifier {
+    SerialModifier() {}
+    explicit SerialModifier(Json::Value &v) {
+        if (v.isMember("modifier")) {
+           modifierType = v["modifier"].asString();
+        }
+        if (v.isMember("modifierValue")) {
+            modifierValue = v["modifierValue"].asString();   
+        }     
+    }
+    
+    std::string modify(std::string value) {
+        if (modifierType == "none") {            
+            return value;
+        } 
+        if (modifierType == "substring") {
+            int start = 0;
+            int length = -1;
+            try {
+                if(!modifierValue.empty()) {
+                    if(modifierValue.find(",") != std::string::npos) {
+                        auto values = split(modifierValue, ',');
+                        if(values.size() == 2) { 
+                            start = stoi(values[0]);
+                            length = stoi(values[1]);
+                        } else if(values.size() == 1) {
+                            length = stoi(values[0]);
+                        }
+                    } 
+                }
+            } catch(std::exception &ex) {
+                LogErr(VB_PLUGIN, "Modifier Syntax Error '%s' '%s'\n", modifierValue.c_str(),  ex.what());
+            }
+            return value.substr(start, length);   
+        } 
+        if (modifierType == "regex") {
+            try{
+                std::regex regex(modifierValue, std::regex_constants::ECMAScript | std::regex_constants::icase);
+                std::smatch match;
+                if (std::regex_match(value, match, regex))
+                {
+                    // The first sub_match is the whole string; the next
+                    // sub_match is the first parenthesized expression.
+                    if (match.size() == 2)
+                    {
+                        std::ssub_match sub_match = match[1];
+                        std::string match_text = sub_match.str();
+                        //std::cout << value << " has a match of " << match_text << '\n';
+                        return match_text;
+                    }
+                }
+            } catch(std::exception &ex) {
+                LogErr(VB_PLUGIN, "Regex Error '%s'\n", ex.what());
+            }
+        } 
+        return value;
+    }    
+    std::string modifierType = "none";
+    std::string modifierValue;
 };
 
 struct SerialCommandArg {
@@ -72,12 +140,15 @@ struct SerialEvent {
     explicit SerialEvent(Json::Value &v) {
         description = v["description"].asString();
         condition = SerialCondition(v);
+        modifier = SerialModifier(v);
 
         command = v;
         command.removeMember("argTypes");
         command.removeMember("args");
         command.removeMember("condition");
         command.removeMember("conditionValue");
+        command.removeMember("modifier");
+        command.removeMember("modifierValue");
         command.removeMember("description");
 
         if (v.isMember("args")) {
@@ -98,8 +169,12 @@ struct SerialEvent {
     bool matches(std::string const& ev) {
         return condition.matches(ev);
     }
+
+    std::string modify(std::string ev) {
+        return modifier.modify(ev);
+    }
     
-    void invoke(std::string &ev) {       
+    void invoke(std::string ev) {       
         Json::Value newCommand = command;
         for (auto &a : args) {
             std::string tp = "string";
@@ -120,11 +195,11 @@ struct SerialEvent {
         }
 
         CommandManager::INSTANCE.run(newCommand);
-    }
-    
+    }    
 
     std::string description;    
     SerialCondition condition;
+    SerialModifier modifier;
     
     Json::Value command;
     std::vector<SerialCommandArg> args;
@@ -255,14 +330,15 @@ public:
 
                 remove_control_characters(serialData);
                 if(!serialData.empty()) {
-                    LogInfo(VB_PLUGIN, "Serial data found '%s'\n", serialData.c_str());
+                    //LogInfo(VB_PLUGIN, "Serial data found '%s'\n", serialData.c_str());
                     serial_data.push_back(serialData);
                     if (serial_data.size() > 25) {
                         serial_data.pop_front();
                     }
                     for (auto &a : serial_events) {
                         if (a->matches(serialData)) {
-                            a->invoke(serialData);
+                            auto text = a->modify(serialData);
+                            a->invoke(text);
                         }
                     }
                 }

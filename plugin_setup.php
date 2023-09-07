@@ -37,7 +37,7 @@ var serialEventConfig = <? echo json_encode($pluginJson, JSON_PRETTY_PRINT); ?>;
 
 var uniqueId = 1;
 var modelOptions = "";
-function AddSerialEventItem(type) {
+function AddSerialEventItem(type, modType ) {
     var id = $("#serialeventTableBody > tr").length + 1;
     var html = "<tr class='fppTableRow";
     if (id % 2 != 0) {
@@ -57,9 +57,20 @@ function AddSerialEventItem(type) {
     if(type == 'endswith') {html += " selected ";}
     html += ">Ends With</option><option value='regex'";
     if(type == 'regex') {html += " selected ";}
-    html += ">Regex</option></select>";
-    html += "<td><input type='text'  minlength='7' maxlength='15' size='15' class='conditionvalue' />";
-    html += "</td><td><table class='fppTable' border=0 id='tableSerialCommand_" + uniqueId +"'>";
+    html += ">Regex</option></select></td>";
+    html += "<td><input type='text'  minlength='7' maxlength='15' size='15' class='conditionvalue' /></td>";
+    
+    html += "<td><select class='type'>";
+    html += "<option value='none'";
+    if(modType == 'none') {html += " selected ";}
+    html += ">None</option><option value='substring'";
+    if(modType == 'substring') {html += " selected ";}
+    html += ">SubString</option><option value='regex'";
+    if(modType == 'regex') {html += " selected ";}
+    html += ">Regex</option></select></td>";
+
+    html += "<td><input type='text'  minlength='7' maxlength='15' size='15' class='modifiervalue' /></td>";
+    html += "<td><table class='fppTable' border=0 id='tableSerialCommand_" + uniqueId +"'></td>";
     html += "<td>Command:</td><td><select class='serialcommand' id='serialcommand" + uniqueId + "' onChange='CommandSelectChanged(\"serialcommand" + uniqueId + "\", \"tableSerialCommand_" + uniqueId + "\" , false, PrintArgsInputsForEditable);'><option value=''></option></select></td></tr>";
     html += "</table></td></tr>";
     //selected
@@ -80,11 +91,15 @@ function SaveSerialEventItem(row) {
     var desc = $(row).find('.desc').val();
 	var conditiontype = $(row).find('.conditiontype').val();
     var conditionvalue = $(row).find('.conditionvalue').val();
+    var modifiertype = $(row).find('.modifiertype').val();
+    var modifiervalue = $(row).find('.modifiervalue').val();
 
     var json = {
         "description": desc,
         "condition": conditiontype,
-        "conditionValue": conditionvalue
+        "conditionValue": conditionvalue,
+        "modifier": modifiertype,
+        "modifierValue": modifiervalue
     };
 
     CommandToJSON('serialcommand' + id, 'tableSerialCommand_' + id, json, true);
@@ -171,7 +186,7 @@ Speed:<input type='number' id='serialspeed' class='serialspeed' />
 <table border=0>
 <tr><td colspan='2'>
         <input type="button" value="Save" class="buttons genericButton" onclick="SaveSerialEventItems();">
-        <input type="button" value="Add" class="buttons genericButton" onclick="AddSerialEventItem('contains');">
+        <input type="button" value="Add" class="buttons genericButton" onclick="AddSerialEventItem('contains', 'none');">
         <input id="delButton" type="button" value="Delete" class="deleteEventButton disableButtons genericButton" onclick="RemoveSerialEventItem();">
     </td>
 </tr>
@@ -179,8 +194,8 @@ Speed:<input type='number' id='serialspeed' class='serialspeed' />
 
 <div class='fppTableWrapper fppTableWrapperAsTable'>
 <div class='fppTableContents'>
-<table class="fppTable" id="serialeventTable"  width='100%'>
-<thead><tr class="fppTableHeader"><th>#</th><th></th><th>Description</th><th>Condition Type</th><th>Condition Value</th><th>Command</th></tr></thead>
+<table class="fppSelectableRowTable" id="serialeventTable"  width='100%'>
+<thead><tr class="fppTableHeader"><th>#</th><th></th><th>Description</th><th>Condition Type</th><th>Condition Value</th><th>Modifier Type</th><th>Modifier Value</th><th>Command</th></tr></thead>
 <tbody id='serialeventTableBody'>
 </tbody>
 </table>
@@ -209,9 +224,10 @@ Speed:<input type='number' id='serialspeed' class='serialspeed' />
 <script>
 
 $.each(serialEventConfig["serialEvents"], function( key, val ) {
-    var row = AddSerialEventItem(val["condition"]);
+    var row = AddSerialEventItem(val["condition"], val["modifier"]);
     $(row).find('.desc').val(val["description"]);
     $(row).find('.conditionvalue').val(val["conditionValue"]);
+    $(row).find('.modifiervalue').val(val["modifierValue"]);
 
     var id = parseInt($(row).find('.uniqueId').html());
     PopulateExistingCommand(val, 'serialcommand' + id, 'tableSerialCommand_' + id, false, PrintArgsInputsForEditable);
