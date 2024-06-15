@@ -293,7 +293,7 @@ public:
     void remove_control_characters(std::string& s) {
         s.erase(std::remove_if(s.begin(), s.end(), [](char c) { return std::iscntrl(c); }), s.end());
     }
-    virtual const std::shared_ptr<httpserver::http_response> render_GET(const httpserver::http_request &req) override {
+    virtual HTTP_RESPONSE_CONST std::shared_ptr<httpserver::http_response> render_GET(const httpserver::http_request &req) override {
         std::string v;
         
         if (req.get_path_pieces().size() > 1) {
