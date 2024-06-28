@@ -115,7 +115,7 @@ function SaveSerialEventItems() {
     });
     
     newserialeventConfig["port"] = document.getElementById("serialport").value;
-    newserialeventConfig["speed"] = document.getElementById("serialport").serialspeed;
+    newserialeventConfig["speed"] = document.getElementById("serialspeed").value;
 
     var data = JSON.stringify(newserialeventConfig);
     $.ajax({
