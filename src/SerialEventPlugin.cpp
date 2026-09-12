@@ -12,7 +12,6 @@
 #include <list>
 #include <vector>
 #include <sstream>
-#include <httpserver.hpp>
 #include <cmath>
 #include <mutex>
 #include <regex>
@@ -28,6 +27,7 @@
 #include "settings.h"
 #include "Plugin.h"
 #include "log.h"
+#include "fpphttp.h"
 
 #include "channeloutput/serialutil.h"
 
@@ -205,7 +205,9 @@ struct SerialEvent {
     std::vector<SerialCommandArg> args;
 };
 
-class SerialEventPlugin : public FPPPlugin, public httpserver::http_resource {
+static const char* SERIALEVENT_API_PATH = "/SERIALEVENT";
+
+class SerialEventPlugin : public FPPPlugin {
 public:
     std::vector<std::unique_ptr<SerialEvent>> serial_events;
     std::list<std::string> serial_data;
@@ -213,7 +215,7 @@ public:
     int m_fd {-1};
     bool enabled {false};
   
-    SerialEventPlugin() : FPPPlugin("fpp-plugin-serial_event") {
+    SerialEventPlugin() : FPPPlugin("fpp-plugin-serial-events") {
         LogInfo(VB_PLUGIN, "Initializing Serial Event Plugin\n");        
         enabled = InitSerial();
     }
@@ -293,22 +295,37 @@ public:
     void remove_control_characters(std::string& s) {
         s.erase(std::remove_if(s.begin(), s.end(), [](char c) { return std::iscntrl(c); }), s.end());
     }
-    virtual HTTP_RESPONSE_CONST std::shared_ptr<httpserver::http_response> render_GET(const httpserver::http_request &req) override {
-        std::string v;
-        
-        if (req.get_path_pieces().size() > 1) {
-            std::string p1 = req.get_path_pieces()[1];
+    void HandleApi(const HttpRequestPtr &req, HttpCallback &&callback) {
+        auto pieces = getPathPieces(req->path());
+
+        // pieces[0] is "SERIALEVENT"; a subpath (family route) lands here as
+        // pieces[1], e.g. "/SERIALEVENT/list" -> pieces = {"SERIALEVENT", "list"}.
+        if (pieces.size() > 1) {
+            const std::string &p1 = pieces[1];
             if (p1 == "list") {
+                std::string v;
                 for (auto &sd : serial_data) {
                     v += sd + "\n";
                 }
-                return std::shared_ptr<httpserver::http_response>(new httpserver::string_response(v, 200));
-            } 
+                callback(makeStringResponse(v, 200));
+                return;
+            }
         }
-        return std::shared_ptr<httpserver::http_response>(new httpserver::string_response("Not Found", 404));
+        callback(makeStringResponse("Not Found", 404));
     }
-    void registerApis(httpserver::webserver *m_ws) override {
-        m_ws->register_resource("/SERIALEVENT", this, true);
+
+    void registerApis() override {
+        FPPPlugins::registerPluginApi(
+            SERIALEVENT_API_PATH,
+            [this](const HttpRequestPtr &req, HttpCallback &&callback) {
+                HandleApi(req, std::move(callback));
+            },
+            { drogon::Get },
+            true);
+    }
+
+    void unregisterApis() override {
+        FPPPlugins::unregisterPluginApi(SERIALEVENT_API_PATH);
     }
 
      virtual void addControlCallbacks(std::map<int, std::function<bool(int)>> &callbacks) {
